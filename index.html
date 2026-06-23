@@ -298,8 +298,8 @@
             
             <div class="compliance-info">
                 <strong>Section 3 Compliance Requirements:</strong>
-                Section 3 Workers: Minimum 25% of total project hours<br>
-                Section 3 Targeted Workers: Minimum 5% of total project hours
+                Section 3 Workers: Minimum 25% of total project hours (Section 3 + Targeted combined)<br>
+                Section 3 Targeted Workers: Minimum 5% of total project hours (included in the 25%)
             </div>
             
             <table class="input-table">
@@ -307,7 +307,7 @@
                     <tr>
                         <th>Contractor Name</th>
                         <th>Total Employee Hours</th>
-                        <th>Section 3 Worker Hours</th>
+                        <th>Section 3 Worker Hours <span style="font-size:11px;font-weight:400;opacity:0.85">(non-targeted)</span></th>
                         <th>Section 3 Targeted Worker Hours</th>
                         <th>Action</th>
                     </tr>
@@ -468,7 +468,9 @@
                         section3Hours,
                         targetedHours,
                         regularHours: Math.max(0, totalHours - section3Hours),
-                        section3Percentage: totalHours > 0 ? (section3Hours / totalHours * 100) : 0,
+                        // Combined S3 + Targeted counts toward the 25% threshold (separate buckets)
+                        combinedSection3Pct: totalHours > 0 ? ((section3Hours + targetedHours) / totalHours * 100) : 0,
+                        section3Percentage: totalHours > 0 ? ((section3Hours + targetedHours) / totalHours * 100) : 0,
                         targetedPercentage: totalHours > 0 ? (targetedHours / totalHours * 100) : 0
                     });
                 }
@@ -485,18 +487,19 @@
                 if (inputs.length >= 4 && data[index]) {
                     const item = data[index];
                     
-                    // Validate Section 3 worker hours
-                    if (item.section3Percentage < SECTION3_WORKER_THRESHOLD && item.totalHours > 0) {
+                    // Validate combined Section 3 (non-targeted + targeted) toward 25% threshold
+                    const combinedPct = item.totalHours > 0 ? ((item.section3Hours + item.targetedHours) / item.totalHours * 100) : 0;
+                    if (combinedPct < SECTION3_WORKER_THRESHOLD && item.totalHours > 0) {
                         inputs[2].classList.add('error');
                         inputs[2].classList.remove('warning');
-                    } else if (item.section3Percentage < SECTION3_WORKER_THRESHOLD * 1.1 && item.totalHours > 0) {
+                    } else if (combinedPct < SECTION3_WORKER_THRESHOLD * 1.1 && item.totalHours > 0) {
                         inputs[2].classList.add('warning');
                         inputs[2].classList.remove('error');
                     } else {
                         inputs[2].classList.remove('error', 'warning');
                     }
-                    
-                    // Validate targeted worker hours
+
+                    // Validate targeted worker hours toward 5% threshold
                     if (item.targetedPercentage < SECTION3_TARGETED_THRESHOLD && item.totalHours > 0) {
                         inputs[3].classList.add('error');
                         inputs[3].classList.remove('warning');
@@ -506,15 +509,10 @@
                     } else {
                         inputs[3].classList.remove('error', 'warning');
                     }
-                    
+
                     // Validate that Section 3 hours don't exceed total hours
                     if (item.section3Hours > item.totalHours) {
                         inputs[2].classList.add('error');
-                    }
-                    
-                    // Validate that targeted hours don't exceed Section 3 hours
-                    if (item.targetedHours > item.section3Hours) {
-                        inputs[3].classList.add('error');
                     }
                 }
             });
@@ -524,7 +522,7 @@
             const totalHours = data.reduce((sum, item) => sum + item.totalHours, 0);
             const totalSection3Hours = data.reduce((sum, item) => sum + item.section3Hours, 0);
             const totalTargetedHours = data.reduce((sum, item) => sum + item.targetedHours, 0);
-            const avgSection3Percentage = totalHours > 0 ? (totalSection3Hours / totalHours * 100) : 0;
+            const avgSection3Percentage = totalHours > 0 ? ((totalSection3Hours + totalTargetedHours) / totalHours * 100) : 0;
             const avgTargetedPercentage = totalHours > 0 ? (totalTargetedHours / totalHours * 100) : 0;
             
             const section3Compliant = avgSection3Percentage >= SECTION3_WORKER_THRESHOLD;
@@ -603,10 +601,12 @@
         function createComplianceChart(data) {
             // Per HUD regulation: Targeted Section 3 hours are INCLUDED within the
             // Section 3 25% threshold (the 5% targeted is part of the 25%).
-            // Doughnut shows two segments: Regular Workers vs Section 3 (combined).
-            const totalHours   = data.reduce((s, i) => s + i.totalHours,    0);
-            const totalSection3 = data.reduce((s, i) => s + i.section3Hours, 0);
-            const totalRegular  = Math.max(0, totalHours - totalSection3);
+            // Doughnut: Regular Workers vs Section 3 combined (non-targeted + targeted).
+            const totalHours          = data.reduce((s, i) => s + i.totalHours,    0);
+            const totalSection3       = data.reduce((s, i) => s + i.section3Hours, 0);
+            const totalTargeted       = data.reduce((s, i) => s + i.targetedHours, 0);
+            const totalSection3Combined = totalSection3 + totalTargeted;   // ← combined for doughnut
+            const totalRegular        = Math.max(0, totalHours - totalSection3Combined);
 
             const ctx = document.getElementById('complianceChart').getContext('2d');
             charts.compliance = new Chart(ctx, {
@@ -615,7 +615,7 @@
                 data: {
                     labels: ['Regular Workers', 'Section 3 Workers (incl. Targeted)'],
                     datasets: [{
-                        data: [totalRegular, totalSection3],
+                        data: [totalRegular, totalSection3Combined],
                         backgroundColor: [C.chartPale, C.chartBlue],
                         borderColor: ['white', 'white'],
                         borderWidth: 3,
@@ -642,7 +642,6 @@
                             }
                         },
                         datalabels: {
-                            // Pale segment (index 0) uses dark text; Section 3 segment uses white
                             color: function(ctx) {
                                 return ctx.dataIndex === 0 ? C.dark : 'white';
                             },
@@ -672,24 +671,25 @@
                             data: data.map(item => item.regularHours),
                             backgroundColor: C.chartPale,
                             borderColor: C.chartLight,
-                            borderWidth: 2,
-                            borderRadius: 6,
+                            borderWidth: 1,
+                            // Only round top corners when this is the top segment
+                            borderRadius: 0,
                         },
                         {
                             label: 'Section 3 Workers',
                             data: data.map(item => item.section3Hours),
                             backgroundColor: C.chartBlue,
                             borderColor: C.chartMid,
-                            borderWidth: 2,
-                            borderRadius: 6,
+                            borderWidth: 1,
+                            borderRadius: 0,
                         },
                         {
                             label: 'Section 3 Targeted',
                             data: data.map(item => item.targetedHours),
                             backgroundColor: C.chartNavy,
-                            borderColor: '#2a5052',
-                            borderWidth: 2,
-                            borderRadius: 6,
+                            borderColor: '#1a3a5c',
+                            borderWidth: 1,
+                            borderRadius: { topLeft: 5, topRight: 5, bottomLeft: 0, bottomRight: 0 },
                         }
                     ]
                 },
@@ -705,20 +705,42 @@
                         tooltip: {
                             backgroundColor: 'rgba(0,0,0,0.8)',
                             titleColor: 'white', bodyColor: 'white',
-                            cornerRadius: 8, mode: 'index', intersect: false
+                            cornerRadius: 8, mode: 'index', intersect: false,
+                            callbacks: {
+                                footer: function(items) {
+                                    const total = items.reduce((s, i) => s + i.raw, 0);
+                                    return `Total: ${total.toLocaleString()} hrs`;
+                                }
+                            }
                         },
                         datalabels: {
                             anchor: 'center',
                             align: 'center',
                             font: { weight: 'bold', size: 11 },
-                            // Pale Oak bars get dark text; Ocean Blue / Stormy Teal get white
-                            color: function(ctx) { return ctx.datasetIndex === 0 ? C.chartNavy : 'white'; },
+                            color: function(ctx) {
+                                return ctx.datasetIndex === 0 ? C.chartNavy : 'white';
+                            },
+                            // Only show label if segment is tall enough to fit text
+                            display: function(ctx) {
+                                const total = data[ctx.dataIndex]?.totalHours || 1;
+                                const pct = ctx.dataset.data[ctx.dataIndex] / total;
+                                return pct > 0.05; // hide label if segment < 5% of total bar
+                            },
                             formatter: function(v) { return v > 0 ? v.toLocaleString() : ''; }
                         }
                     },
                     scales: {
-                        x: { stacked: false, grid: { display: false }, ticks: { color: '#666', maxRotation: 45 } },
-                        y: { beginAtZero: true, grid: { color: 'rgba(0,0,0,0.05)' }, ticks: { color: '#666' } }
+                        x: {
+                            stacked: true,
+                            grid: { display: false },
+                            ticks: { color: '#666', maxRotation: 45 }
+                        },
+                        y: {
+                            stacked: true,
+                            beginAtZero: true,
+                            grid: { color: 'rgba(0,0,0,0.05)' },
+                            ticks: { color: '#666' }
+                        }
                     }
                 }
             });
@@ -828,7 +850,8 @@
             
             // Add data rows
             data.forEach(row => {
-                const section3Compliant = row.section3Percentage >= SECTION3_WORKER_THRESHOLD;
+                const rowCombinedPct = row.totalHours > 0 ? ((row.section3Hours + row.targetedHours) / row.totalHours * 100) : 0;
+                const section3Compliant = rowCombinedPct >= SECTION3_WORKER_THRESHOLD;
                 const targetedCompliant = row.targetedPercentage >= SECTION3_TARGETED_THRESHOLD;
                 const overallCompliant = section3Compliant && targetedCompliant;
                 
@@ -839,7 +862,7 @@
             const totalHours = data.reduce((sum, item) => sum + item.totalHours, 0);
             const totalSection3Hours = data.reduce((sum, item) => sum + item.section3Hours, 0);
             const totalTargetedHours = data.reduce((sum, item) => sum + item.targetedHours, 0);
-            const avgSection3Percentage = totalHours > 0 ? (totalSection3Hours / totalHours * 100) : 0;
+            const avgSection3Percentage = totalHours > 0 ? ((totalSection3Hours + totalTargetedHours) / totalHours * 100) : 0;
             const avgTargetedPercentage = totalHours > 0 ? (totalTargetedHours / totalHours * 100) : 0;
             
             csvContent += `\nSummary:\n`;
@@ -899,7 +922,7 @@ async function exportToPDF() {
         const totalHours           = data.reduce((s, i) => s + i.totalHours,      0);
         const totalSection3Hours   = data.reduce((s, i) => s + i.section3Hours,   0);
         const totalTargetedHours   = data.reduce((s, i) => s + i.targetedHours,   0);
-        const avgSection3Pct       = totalHours > 0 ? (totalSection3Hours / totalHours * 100) : 0;
+        const avgSection3Pct       = totalHours > 0 ? ((totalSection3Hours + totalTargetedHours) / totalHours * 100) : 0;
         const avgTargetedPct       = totalHours > 0 ? (totalTargetedHours / totalHours * 100) : 0;
         const isCompliant          = avgSection3Pct >= 25 && avgTargetedPct >= 5;
 
@@ -1014,7 +1037,7 @@ async function exportToPDF() {
             item.targetedHours.toLocaleString(),
             `${item.section3Percentage.toFixed(1)}%`,
             `${item.targetedPercentage.toFixed(1)}%`,
-            (item.section3Percentage >= 25 && item.targetedPercentage >= 5) ? 'Compliant' : 'Non-Compliant'
+            ((item.section3Hours + item.targetedHours) / item.totalHours * 100 >= 25 && item.targetedPercentage >= 5) ? 'Compliant' : 'Non-Compliant'
         ]);
 
         doc.autoTable({
